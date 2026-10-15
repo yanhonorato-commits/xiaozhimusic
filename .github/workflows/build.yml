@@ -33,8 +33,48 @@ jobs:
         run: |
           echo "all_boards=$(python scripts/release.py --list-boards --json)" >> $GITHUB_OUTPUT
 
-      - id: select
+            - id: select
         name: Select boards based on changes
+        env:
+          ALL_BOARDS: ${{ steps.list.outputs.all_boards }}
+        run: |
+          EVENT_NAME="${{ github.event_name }}"
+
+          if [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
+            echo 'boards=["otto-robot"]' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if [[ "$EVENT_NAME" == "push" ]]; then
+            echo "boards=$ALL_BOARDS" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          BASE_SHA="${{ github.event.pull_request.base.sha }}"
+          HEAD_SHA="${{ github.event.pull_request.head.sha }}"
+          CHANGED=$(git diff --name-only "$BASE_SHA" "$HEAD_SHA" || true)
+          NEED_ALL=0
+          declare -A AFFECTED
+
+          while IFS= read -r file; do
+            if [[ "$file" == main/* && "$file" != main/boards/* ]]; then
+              NEED_ALL=1
+            fi
+
+            if [[ "$file" == main/boards/* ]]; then
+              board=$(echo "$file" | cut -d '/' -f3)
+              AFFECTED[$board]=1
+            fi
+          done <<< "$CHANGED"
+
+          if [[ "$NEED_ALL" -eq 1 ]]; then
+            echo "boards=$ALL_BOARDS" >> "$GITHUB_OUTPUT"
+          elif [[ ${#AFFECTED[@]} -eq 0 ]]; then
+            echo "boards=[]" >> "$GITHUB_OUTPUT"
+          else
+            JSON=$(printf '%s\n' "${!AFFECTED[@]}" | sort -u | jq -R -s -c 'split("\n")[:-1]')
+            echo "boards=$JSON" >> "$GITHUB_OUTPUT"
+          fi
         env:
           ALL_BOARDS: ${{ steps.list.outputs.all_boards }}
         run: |
